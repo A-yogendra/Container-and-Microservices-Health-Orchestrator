@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Microservices Health Orchestrator Dashboard</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Inter Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8;
+        }
+        .health-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+        .bg-healthy { background-color: #10B981; } /* Green */
+        .bg-degraded { background-color: #FBBF24; } /* Yellow */
+        .bg-critical { background-color: #EF4444; } /* Red */
+        .bg-unknown { background-color: #6B7280; } /* Gray */
+
+        .action-log-entry {
+            border-bottom: 1px solid #e5e7eb;
+            padding-bottom: 8px;
+            margin-bottom: 8px;
+        }
+        .action-log-entry:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+    </style>
+</head>
+<body class="p-6">
+    <div class="max-w-7xl mx-auto bg-white shadow-lg rounded-xl p-8">
+        <h1 class="text-4xl font-bold text-gray-800 mb-8 text-center">Microservices Health Dashboard</h1>
+
+        <!-- Service Health Section -->
+        <div class="mb-10">
+            <h2 class="text-2xl font-semibold text-gray-700 mb-6">Service Health Overview</h2>
+            <div id="services-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <!-- Service cards will be injected here by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Action Log Section -->
+        <div>
+            <h2 class="text-2xl font-semibold text-gray-700 mb-6">Orchestrator Action Log</h2>
+            <div id="action-log-container" class="bg-gray-50 p-6 rounded-lg shadow-inner max-h-96 overflow-y-auto">
+                <!-- Action log entries will be injected here by JavaScript -->
+                <p id="no-actions-message" class="text-gray-500 text-center py-4">No actions taken yet.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Configuration (Mirrored from Python) ---
+        const SERVICES_CONFIG = {
+            "auth-service": { "cpu_usage": 0.3, "memory_usage": 0.4, "error_rate": 0.01, "latency": 50, "status": "Healthy" },
+            "user-profile-service": { "cpu_usage": 0.2, "memory_usage": 0.3, "error_rate": 0.005, "latency": 40, "status": "Healthy" },
+            "product-catalog-service": { "cpu_usage": 0.4, "memory_usage": 0.5, "error_rate": 0.02, "latency": 60, "status": "Healthy" },
+            "order-processing-service": { "cpu_usage": 0.5, "memory_usage": 0.6, "error_rate": 0.03, "latency": 70, "status": "Healthy" },
+        };
+
+        const HEALTH_THRESHOLDS = {
+            "cpu_critical": 0.85, "cpu_degraded": 0.70,
+            "memory_critical": 0.80, "memory_degraded": 0.65,
+            "error_critical": 0.05, "error_degraded": 0.02,
+            "latency_critical": 150, "latency_degraded": 100,
+        };
+
+        // --- Global Variables for Simulation (Mirrored from Python) ---
+        let currentServiceStates = {};
+        // Initialize currentServiceStates with deep copies
+        for (const name in SERVICES_CONFIG) {
+            currentServiceStates[name] = { ...SERVICES_CONFIG[name] };
+        }
+
+        const serviceMetricsHistory = {};
+        for (const name in SERVICES_CONFIG) {
+            // Using a simple array for history, managing max length manually
+            serviceMetricsHistory[name] = [];
+        }
+
+        const actionLog = [];
+        let iteration = 0;
+
+        // --- DOM Elements ---
+        const servicesContainer = document.getElementById('services-container');
+        const actionLogContainer = document.getElementById('action-log-container');
+        const noActionsMessage = document.getElementById('no-actions-message');
+
+        // --- 1. Microservice Simulation (JavaScript Version) ---
+        class Microservice {
+            constructor(name, initialMetrics) {
+                this.name = name;
+                this.metrics = { ...initialMetrics }; // Deep copy initial metrics
+                this.status = initialMetrics.status || "Healthy";
+            }
+
+            updateMetrics() {
+                // Introduce a small random fluctuation
+                this.metrics.cpu_usage = Math.max(0.01, Math.min(0.99, this.metrics.cpu_usage + (Math.random() * 0.1 - 0.05)));
+                this.metrics.memory_usage = Math.max(0.01, Math.min(0.99, this.metrics.memory_usage + (Math.random() * 0.08 - 0.04)));
+                this.metrics.error_rate = Math.max(0.001, Math.min(0.1, this.metrics.error_rate + (Math.random() * 0.015 - 0.005)));
+                this.metrics.latency = Math.max(10, Math.min(200, this.metrics.latency + (Math.random() * 30 - 10)));
+
+                // Occasionally simulate a "problem"
+                if (Math.random() < 0.1) { // 10% chance of a spike
+                    const problemTypes = ["cpu", "memory", "error", "latency"];
+                    const problemType = problemTypes[Math.floor(Math.random() * problemTypes.length)];
+                    if (problemType === "cpu") {
+                        this.metrics.cpu_usage = Math.min(0.99, this.metrics.cpu_usage + (Math.random() * 0.3 + 0.1));
+                    } else if (problemType === "memory") {
+                        this.metrics.memory_usage = Math.min(0.99, this.metrics.memory_usage + (Math.random() * 0.25 + 0.1));
+                    } else if (problemType === "error") {
+                        this.metrics.error_rate = Math.min(0.1, this.metrics.error_rate + (Math.random() * 0.05 + 0.02));
+                    } else if (problemType === "latency") {
+                        this.metrics.latency = Math.min(200, this.metrics.latency + (Math.random() * 80 + 30));
+                    }
+                }
+
+                // Update global state and history
+                currentServiceStates[this.name] = { ...this.metrics }; // Update with a copy
+                serviceMetricsHistory[this.name].push({ ...this.metrics }); // Store a copy
+                if (serviceMetricsHistory[this.name].length > 10) { // Maintain maxlen
+                    serviceMetricsHistory[this.name].shift();
+                }
+            }
+        }
+
+        // --- 2. Health Monitoring Module (JavaScript Version) ---
+        class HealthMonitor {
+            constructor(thresholds) {
+                this.thresholds = thresholds;
+            }
+
+            assessHealth(serviceName, metrics) {
+                let status = "Healthy";
+                const reasons = [];
+
+                if (metrics.cpu_usage >= this.thresholds.cpu_critical) {
+                    status = "Critical";
+                    reasons.push(`High CPU (${metrics.cpu_usage.toFixed(2)})`);
+                } else if (metrics.cpu_usage >= this.thresholds.cpu_degraded) {
+                    if (status === "Healthy") status = "Degraded";
+                    reasons.push(`Elevated CPU (${metrics.cpu_usage.toFixed(2)})`);
+                }
+
+                if (metrics.memory_usage >= this.thresholds.memory_critical) {
+                    status = "Critical";
+                    reasons.push(`High Memory (${metrics.memory_usage.toFixed(2)})`);
+                } else if (metrics.memory_usage >= this.thresholds.memory_degraded) {
+                    if (status === "Healthy") status = "Degraded";
+                    reasons.push(`Elevated Memory (${metrics.memory_usage.toFixed(2)})`);
+                }
+
+                if (metrics.error_rate >= this.thresholds.error_critical) {
+                    status = "Critical";
+                    reasons.push(`High Error Rate (${(metrics.error_rate * 100).toFixed(2)}%)`);
+                } else if (metrics.error_rate >= this.thresholds.error_degraded) {
+                    if (status === "Healthy") status = "Degraded";
+                    reasons.push(`Elevated Error Rate (${(metrics.error_rate * 100).toFixed(2)}%)`);
+                }
+
+                if (metrics.latency >= this.thresholds.latency_critical) {
+                    status = "Critical";
+                    reasons.push(`High Latency (${metrics.latency.toFixed(0)}ms)`);
+                } else if (metrics.latency >= this.thresholds.latency_degraded) {
+                    if (status === "Healthy") status = "Degraded";
+                    reasons.push(`Elevated Latency (${metrics.latency.toFixed(0)}ms)`);
+                }
+
+                return { status, reasons: reasons.join(", ") || "All metrics normal" };
+            }
+        }
+
+        // --- 3. Failure Prediction Module (JavaScript Version) ---
+        class FailurePredictor {
+            predictFailure(serviceName, history) {
+                if (history.length < 3) {
+                    return { predicted: false, reason: "Not enough history for prediction" };
+                }
+
+                const last = history[history.length - 1];
+                const prev = history[history.length - 2];
+                const prevPrev = history[history.length - 3];
+
+                const isCpuIncreasing = last.cpu_usage > prev.cpu_usage && prev.cpu_usage > prevPrev.cpu_usage && last.cpu_usage > HEALTH_THRESHOLDS.cpu_degraded;
+                const isMemIncreasing = last.memory_usage > prev.memory_usage && prev.memory_usage > prevPrev.memory_usage && last.memory_usage > HEALTH_THRESHOLDS.memory_degraded;
+                const isErrorIncreasing = last.error_rate > prev.error_rate && prev.error_rate > prevPrev.error_rate && last.error_rate > HEALTH_THRESHOLDS.error_degraded;
+
+                if (isCpuIncreasing || isMemIncreasing || isErrorIncreasing) {
+                    return { predicted: true, reason: "Metrics showing an increasing trend" };
+                }
+
+                return { predicted: false, reason: "No immediate prediction" };
+            }
+        }
+
+        // --- 4. Failure Classification Module (JavaScript Version) ---
+        class FailureClassifier {
+            classifyFailure(serviceName, status, reasons) {
+                if (status === "Critical") {
+                    if (reasons.includes("CPU") || reasons.includes("Memory")) {
+                        return "RESOURCE_EXHAUSTION";
+                    } else if (reasons.includes("Error Rate")) {
+                        return "APPLICATION_ERROR";
+                    } else if (reasons.includes("Latency")) {
+                        return "PERFORMANCE_DEGRADATION";
+                    }
+                } else if (status === "Degraded") {
+                    if (reasons.includes("CPU") || reasons.includes("Memory")) {
+                        return "RESOURCE_WARNING";
+                    } else if (reasons.includes("Error Rate")) {
+                        return "APPLICATION_WARNING";
+                    } else if (reasons.includes("Latency")) {
+                        return "PERFORMANCE_WARNING";
+                    }
+                }
+                return "UNKNOWN";
+            }
+        }
+
+        // --- 5. Healing Decision Engine (JavaScript Version) ---
+        class HealingDecisionEngine {
+            constructor(serviceDependencies = null) {
+                this.serviceDependencies = serviceDependencies || {
+                    "order-processing-service": ["auth-service", "product-catalog-service"],
+                    "user-profile-service": ["auth-service"]
+                };
+            }
+
+            decideAction(serviceName, currentStatus, predictedFailure, classifiedType) {
+                if (currentStatus === "Healthy" && !predictedFailure) {
+                    return { action: null, reason: "No action needed." };
+                }
+
+                let action = null;
+                let reason = "Default action";
+
+                if (classifiedType === "RESOURCE_EXHAUSTION") {
+                    action = "SCALE_UP";
+                    reason = "High resource usage detected, attempting to scale up.";
+                } else if (classifiedType === "APPLICATION_ERROR") {
+                    action = "RESTART_SERVICE";
+                    reason = "High error rate, attempting service restart.";
+                } else if (classifiedType === "PERFORMANCE_DEGRADATION") {
+                    action = "TRAFFIC_REROUTE";
+                    reason = "High latency, rerouting traffic to healthy instances (simulated).";
+                } else if (predictedFailure) {
+                    action = "SCALE_UP";
+                    reason = "Predicted future failure, proactively scaling up.";
+                } else if (currentStatus === "Degraded") {
+                    action = "RESTART_SERVICE";
+                    reason = "Service degraded, attempting restart as a first step.";
+                }
+
+                // Consider dependencies (simplified logic)
+                if (action && this.serviceDependencies[serviceName]) {
+                    for (const dep of this.serviceDependencies[serviceName]) {
+                        const depStatus = currentServiceStates[dep] ? currentServiceStates[dep].status : null;
+                        if (depStatus === "Critical") {
+                            console.warn(`[Decision Engine] WARNING: Dependency '${dep}' is Critical. Holding action on ${serviceName}.`);
+                            return { action: null, reason: `Dependency '${dep}' is Critical. Holding action.` };
+                        }
+                    }
+                }
+
+                return { action, reason };
+            }
+        }
+
+        // --- 6. Orchestration Module (JavaScript Version) ---
+        class OrchestrationModule {
+            executeAction(serviceName, action) {
+                if (action === "RESTART_SERVICE") {
+                    // Simulate restart by resetting metrics to healthy levels
+                    currentServiceStates[serviceName] = {
+                        ...currentServiceStates[serviceName],
+                        cpu_usage: Math.random() * 0.2 + 0.1,
+                        memory_usage: Math.random() * 0.2 + 0.1,
+                        error_rate: Math.random() * 0.004 + 0.001,
+                        latency: Math.random() * 30 + 20,
+                        status: "Healthy"
+                    };
+                    return { success: true, message: `Service '${serviceName}' restarted.` };
+                } else if (action === "SCALE_UP") {
+                    // Simulate scaling by reducing current load
+                    currentServiceStates[serviceName] = {
+                        ...currentServiceStates[serviceName],
+                        cpu_usage: currentServiceStates[serviceName].cpu_usage * 0.7,
+                        memory_usage: currentServiceStates[serviceName].memory_usage * 0.7,
+                        status: "Healthy"
+                    };
+                    return { success: true, message: `Service '${serviceName}' scaled up.` };
+                } else if (action === "TRAFFIC_REROUTE") {
+                    // Simulate rerouting by making service healthy again
+                    currentServiceStates[serviceName] = {
+                        ...currentServiceStates[serviceName],
+                        cpu_usage: Math.random() * 0.2 + 0.1,
+                        memory_usage: Math.random() * 0.2 + 0.1,
+                        error_rate: Math.random() * 0.004 + 0.001,
+                        latency: Math.random() * 30 + 20,
+                        status: "Healthy"
+                    };
+                    return { success: true, message: `Traffic rerouted for '${serviceName}'.` };
+                } else {
+                    return { success: false, message: `Unknown action: ${action}.` };
+                }
+            }
+        }
+
+        // --- Dashboard Rendering Functions ---
+
+        function getHealthColorClass(status) {
+            switch (status) {
+                case 'Healthy': return 'bg-healthy';
+                case 'Degraded': return 'bg-degraded';
+                case 'Critical': return 'bg-critical';
+                default: return 'bg-unknown';
+            }
+        }
+
+        function renderServices() {
+            servicesContainer.innerHTML = ''; // Clear previous content
+            for (const serviceName in currentServiceStates) {
+                const service = currentServiceStates[serviceName];
+                const healthClass = getHealthColorClass(service.status);
+
+                const serviceCard = `
+                    <div class="bg-white p-6 rounded-lg shadow-md border border-gray-200">
+                        <div class="flex items-center mb-4">
+                            <span class="health-indicator ${healthClass}"></span>
+                            <h3 class="text-xl font-semibold text-gray-800">${serviceName}</h3>
+                        </div>
+                        <p class="text-sm text-gray-600 mb-2">Status: <span class="font-medium text-gray-700">${service.status}</span></p>
+                        <ul class="text-sm text-gray-600 space-y-1">
+                            <li>CPU: <span class="font-mono text-gray-800">${(service.cpu_usage * 100).toFixed(1)}%</span></li>
+                            <li>Memory: <span class="font-mono text-gray-800">${(service.memory_usage * 100).toFixed(1)}%</span></li>
+                            <li>Error Rate: <span class="font-mono text-gray-800">${(service.error_rate * 100).toFixed(2)}%</span></li>
+                            <li>Latency: <span class="font-mono text-gray-800">${service.latency.toFixed(0)}ms</span></li>
+                        </ul>
+                    </div>
+                `;
+                servicesContainer.innerHTML += serviceCard;
+            }
+        }
+
+        function renderActionLog() {
+            actionLogContainer.innerHTML = ''; // Clear previous content
+            if (actionLog.length === 0) {
+                actionLogContainer.appendChild(noActionsMessage);
+                return;
+            }
+
+            actionLog.slice().reverse().forEach(entry => { // Display latest first
+                const timestamp = new Date(entry.timestamp * 1000).toLocaleTimeString();
+                const logEntry = `
+                    <div class="action-log-entry">
+                        <p class="text-xs text-gray-500 mb-1">${timestamp} - Iteration ${entry.iteration}</p>
+                        <p class="text-gray-700"><span class="font-semibold">${entry.service}</span>: <span class="font-bold text-blue-600">${entry.action}</span></p>
+                        <p class="text-gray-600 text-sm italic">${entry.message}</p>
+                    </div>
+                `;
+                actionLogContainer.innerHTML += logEntry;
+            });
+            // Scroll to bottom to show latest logs
+            actionLogContainer.scrollTop = actionLogContainer.scrollHeight;
+        }
+
+        // --- Main Orchestrator Loop (JavaScript Version) ---
+        function runOrchestratorDashboard() {
+            // Initialize components
+            const simulatedServices = {};
+            for (const name in SERVICES_CONFIG) {
+                simulatedServices[name] = new Microservice(name, SERVICES_CONFIG[name]);
+            }
+            const healthMonitor = new HealthMonitor(HEALTH_THRESHOLDS);
+            const failurePredictor = new FailurePredictor();
+            const failureClassifier = new FailureClassifier();
+            const decisionEngine = new HealingDecisionEngine();
+            const orchestrator = new OrchestrationModule();
+
+            iteration++; // Increment iteration for each run
+
+            for (const serviceName in simulatedServices) {
+                const serviceObj = simulatedServices[serviceName];
+
+                // 1. Simulate Metrics Collection
+                serviceObj.updateMetrics();
+                const currentMetrics = currentServiceStates[serviceName];
+
+                // 2. Health Assessment
+                const { status, reasons } = healthMonitor.assessHealth(serviceName, currentMetrics);
+                currentServiceStates[serviceName].status = status; // Update global status
+
+                // 3. Failure Prediction
+                const { predicted, reason: predictionReason } = failurePredictor.predictFailure(serviceName, serviceMetricsHistory[serviceName]);
+
+                // 4. Failure Classification
+                const classifiedType = failureClassifier.classifyFailure(serviceName, status, reasons);
+
+                // 5. Healing Decision Engine
+                const { action, reason: decisionReason } = decisionEngine.decideAction(serviceName, status, predicted, classifiedType);
+
+                if (action) {
+                    // 6. Orchestration Module
+                    const { success, message: executionMessage } = orchestrator.executeAction(serviceName, action);
+                    actionLog.push({
+                        timestamp: Date.now() / 1000, // Convert ms to seconds
+                        iteration: iteration,
+                        service: serviceName,
+                        action: action,
+                        status_before: status,
+                        metrics_before: { ...currentMetrics }, // Store a copy
+                        success: success,
+                        message: executionMessage
+                    });
+                }
+            }
+
+            // Update the dashboard UI
+            renderServices();
+            renderActionLog();
+        }
+
+        // Run the orchestrator loop every 2 seconds
+        window.onload = function() {
+            // Initial render
+            renderServices();
+            renderActionLog();
+            setInterval(runOrchestratorDashboard, 2000); // Run every 2 seconds
+        };
+    </script>
+</body>
+</html>
